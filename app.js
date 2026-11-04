@@ -13,6 +13,7 @@
  if(!byId.has(state.resume))state.resume=M.videosDone(state)?'13:2':'14:73';
  if(!byId.has(state.pendingSaveRoute))state.pendingSaveRoute=null;
  let current=null,renderedHash='',retryRoute=state.pendingSaveRoute;
+ let reflectionSending = false;
  const parking=document.createElement('div');parking.hidden=true;document.body.append(parking);
  const clocks=chapterInfo.map(()=>({lastTime:0,lastTick:performance.now(),lastSave:0}));
  const players=chapterInfo.map(info=>{const v=document.createElement('video');v.className='learning-video';v.controls=true;v.preload='metadata';v.playsInline=true;v.setAttribute('aria-label',info.title+' learning video');v.setAttribute('controlsList','nodownload');parking.append(v);return v;});
@@ -39,8 +40,37 @@
   if(M.complete(state)){const copy=s.querySelector('.n-13-13');copy.classList.add('learning-completed');copy.replaceChildren();for(const [i,line]of ['Congratulations on completing your learning!','Please return to qualtrics to complete the survey!'].entries()){const n=document.createElement(i===0?'h1':'p');n.className='completion-message';n.textContent=line;copy.append(n);}}
  }
  function videoText(){const info=routeInfo.get(current);if(!info||!['start','playing','done'].includes(info.view))return;const s=byId.get(current),v=players[info.chapter],r=state.chapters[info.chapter];const duration=Number.isFinite(v.duration)?v.duration:r.duration;const clock=time(v.hasAttribute('src')?v.currentTime:r.time)+' / '+(duration>0?time(duration):'Loading…');if(info.chapter===3){text(s,'14:121',r.completed?'Video completed · '+time(duration)+' / '+time(duration)+'\nEnter the answer in the blank space below.':'Role play · Learning video\n'+clock+'\nFirst viewing: pause and revisit watched sections. Unwatched sections cannot be skipped.');return;}if(info.view==='start')text(s,'14:83',chapterInfo[info.chapter].title+' · Learning video\n'+clock+'\nFirst viewing: pause and revisit watched sections. Unwatched sections cannot be skipped.');if(info.view==='playing')text(s,'14:100',clock+'\nVideo pauses when you leave this page. Your watched progress is retained.');if(info.view==='done')text(s,'14:121','Video completed · '+time(duration)+' / '+time(duration)+'\n'+(info.chapter<2?'You can now move to Chapter '+(info.chapter+2)+'.':'You can now continue to role play.'));}
- function prepareReflection(){const s=byId.get(current);if(current!=='role-video')return;const form=s.querySelector('[data-reflection-form]'),complete=state.chapters[3].completed;form.hidden=!complete;const field=form.querySelector('textarea'),button=form.querySelector('button');field.value=state.roleDraft;field.readOnly=state.roleSubmitted;button.disabled=!complete||!state.roleDraft.trim()||state.roleSubmitted;s.querySelector('[data-role-play]').hidden=complete;}
- function submitReflection(){if(current!=='role-video'||!M.videosDone(state)||!state.chapters[3].completed||!state.roleDraft.trim()||state.roleSubmitted)return;captureAll();state.roleAnswer=state.roleDraft.trim();state.roleSubmitted=true;state.resume='13:2';state.pendingSaveRoute='13:2';retryRoute='13:2';if(!persist()){render('14:160');return;}state.pendingSaveRoute=null;if(!persist()){state.pendingSaveRoute='13:2';render('14:160');return;}prepareReflection();byId.get(current).querySelector('[role="status"]').textContent='Successful submission!';setTimeout(()=>{if(current==='role-video')go('13:2');},1600);}
+ function prepareReflection(){const s=byId.get(current);if(current!=='role-video')return;const form=s.querySelector('[data-reflection-form]'),complete=state.chapters[3].completed;form.hidden=!complete;const field=form.querySelector('textarea'),button=form.querySelector('button');field.value=state.roleDraft;field.readOnly=state.roleSubmitted||reflectionSending;button.disabled=!complete||!state.roleDraft.trim()||state.roleSubmitted||reflectionSending;s.querySelector('[data-role-play]').hidden=complete;}
+ async function submitReflection() {
+  if (current !== 'role-video' || reflectionSending || !M.videosDone(state) || !state.chapters[3].completed || !state.roleDraft.trim() || state.roleSubmitted) return;
+  captureAll();
+  const answer = state.roleDraft.trim();
+  reflectionSending = true;
+  prepareReflection();
+  const status = byId.get('role-video').querySelector('[role="status"]');
+  status.textContent = 'Saving your answer…';
+  try {
+   if (!window.BelongReflections) throw Error('Answer collection could not load. Please refresh and retry.');
+   await window.BelongReflections.submit(answer);
+   state.roleAnswer = answer;
+   state.roleSubmitted = true;
+   state.resume = '13:2';
+   state.pendingSaveRoute = '13:2';
+   retryRoute = '13:2';
+   if (!persist()) { render('14:160'); return; }
+   state.pendingSaveRoute = null;
+   if (!persist()) { state.pendingSaveRoute = '13:2'; render('14:160'); return; }
+   if (current === 'role-video') {
+    byId.get(current).querySelector('[role="status"]').textContent = 'Successful submission!';
+    setTimeout(() => { if (current === 'role-video') go('13:2'); }, 1600);
+   }
+  } catch (error) {
+   if (current === 'role-video') byId.get(current).querySelector('[role="status"]').textContent = error.message || 'Your answer could not be saved. Please retry.';
+  } finally {
+   reflectionSending = false;
+   prepareReflection();
+  }
+ }
  document.addEventListener('submit',event=>{if(event.target.matches('[data-reflection-form]')){event.preventDefault();submitReflection();}});
  function measureIntro(){const s=byId.get(current);if(s?.dataset.view!=='intro'||Number(s.dataset.chapter)===3)return;const column=s.querySelector('.n-13-47'),image=s.querySelector('.n-13-46');if(column&&image&&column.getBoundingClientRect().height>0)image.style.setProperty('--intro-height',column.getBoundingClientRect().height+'px');}
  const resize=new ResizeObserver(measureIntro);screens.filter(s=>s.dataset.view==='intro'&&s.querySelector('.n-13-47')).forEach(s=>resize.observe(s.querySelector('.n-13-47')));document.fonts.ready.then(measureIntro);
@@ -63,7 +93,7 @@
  function confirmLeave(destination){if(roleLocked())return;captureAll();state.returnScreen=current;state.resume=current;state.pendingDestination=destination;saveAndGo('14:144');}
  function play(rewatch=false){const info=routeInfo.get(current);if(!info)return;const routes=chapterInfo[info.chapter].routes,v=players[info.chapter];if(current!==routes.playing)go(routes.playing);if(rewatch){v.currentTime=0;clocks[info.chapter].lastTime=0;}v.play().catch(()=>{});}
  document.addEventListener('keydown',event=>{const n=event.target.closest('[data-nav]');if(n&&n.tagName!=='A'&&['Enter',' '].includes(event.key)){event.preventDefault();n.click();}});
- document.addEventListener('input',event=>{if(current==='role-video'&&event.target.id==='role-reflection'&&!state.roleSubmitted){state.roleDraft=event.target.value;event.target.setCustomValidity('');byId.get(current).querySelector('[data-submit-reflection]').disabled=!state.chapters[3].completed||!state.roleDraft.trim();persist();}});
+ document.addEventListener('input',event=>{if(current==='role-video'&&event.target.id==='role-reflection'&&!state.roleSubmitted&&!reflectionSending){state.roleDraft=event.target.value;event.target.setCustomValidity('');byId.get(current).querySelector('[data-submit-reflection]').disabled=!state.chapters[3].completed||!state.roleDraft.trim();persist();}});
  document.addEventListener('click',event=>{
   const n=event.target.closest('[data-nav],.action,[data-target]');if(!n||n.disabled||!n.closest('.screen:not([hidden])'))return;event.preventDefault();if(n.getAttribute('aria-disabled')==='true')return;const title=label(n),info=routeInfo.get(current);
   if(n.dataset.nav){if(current==='role-video'&&M.complete(state)){go('13:2');return;}if(active(current))confirmLeave(n.dataset.nav);else go(n.dataset.nav);return;}
